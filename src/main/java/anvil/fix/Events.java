@@ -19,6 +19,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+@SuppressWarnings("removal")
 public final class Events implements Listener {
 
 /*    private static final Method setMaximumRepairCost;
@@ -42,35 +43,48 @@ public final class Events implements Listener {
         Player player = (Player) event.getView().getPlayer();
         AnvilInventory inv = event.getInventory();
 
-        //Bukkit.broadcastMessage("MAX " + inv.getMaximumRepairCost() + " COST: " + inv.getRepairCost() + " AMOUNT: " + inv.getRepairCostAmount());
-
-        //Bukkit.broadcastMessage("INVOKED WITH COST: " + inv.getRepairCost() + " RENAME: '" + inv.getRenameText() + "'");
-
+        // Set maximum repair cost to a very high value to prevent "Too Expensive!" message
         inv.setMaximumRepairCost(40_000);
 
-        if (inv.getItem(2) == null || inv.getRepairCost() >= 0 && inv.getRepairCost() <= 39) {
+        // If there's no result item, remove player from preparing map
+        if (inv.getItem(2) == null) {
             this.onRemove(player);
-            //Bukkit.broadcastMessage("RESULT REMOVEDDDDD");
             return;
         }
 
-        ItemStack book = inv.getItem(1);
-        if (book == null) return;
+        // Get the current repair cost
+        int repairCost = inv.getRepairCostAmount();
 
-        //Integer level = preparing.get(player.getUniqueId());
+        ItemStack secondItem = inv.getItem(1);
+        if (secondItem == null) {
+            this.onRemove(player);
+            return;
+        }
 
-        //39 is the max
-        //at 40, "Too Expensive" shows up
-        if (book.getType() == Material.ENCHANTED_BOOK) {
+        ItemStack firstItem = inv.getItem(0);
+        if (firstItem == null) {
+            this.onRemove(player);
+            return;
+        }
 
-            ItemStack input = inv.getItem(0);
-            if (input == null) return;
+        // If cost is 0-39, vanilla handles it fine, but we still send creative packet
+        // to ensure the level cost is always displayed properly
+        if (repairCost >= 0 && repairCost <= 39) {
+            preparing.put(player.getUniqueId(), repairCost);
+            PacketEvents.getAPI().getPlayerManager().sendPacket(player, PacketListener.create(player, true));
+            return;
+        }
 
-            ItemStack result = input.clone();//already done with "asMirrorCopy", but it's best to be safe
-            Map<Enchantment, Integer> enchantsOnInput = input.getEnchantments();
+        // Handle cases where cost is 40 or more (would show "Too Expensive!")
 
-            EnchantmentStorageMeta meta = (EnchantmentStorageMeta) book.getItemMeta();
-            assert meta != null;
+        // Handle enchanted book application
+        if (secondItem.getType() == Material.ENCHANTED_BOOK) {
+            ItemStack result = firstItem.clone();
+            Map<Enchantment, Integer> enchantsOnInput = firstItem.getEnchantments();
+
+            EnchantmentStorageMeta meta = (EnchantmentStorageMeta) secondItem.getItemMeta();
+            if (meta == null) return;
+            
             Set<Map.Entry<Enchantment, Integer>> enchantsOnBook = meta.getStoredEnchants().entrySet();
 
             float cost = this.calculateInitialCost(enchantsOnInput);
@@ -78,10 +92,11 @@ public final class Events implements Listener {
 
             for (Map.Entry<Enchantment, Integer> e : enchantsOnBook) {
                 Enchantment enchantment = e.getKey();
-                if (result.getEnchantmentLevel(enchantment) < e.getValue() && !this.hasConflicting(enchantsOnInput, enchantment) && enchantment.canEnchantItem(input)) {
+                if (result.getEnchantmentLevel(enchantment) < e.getValue() && 
+                    !this.hasConflicting(enchantsOnInput, enchantment) && 
+                    enchantment.canEnchantItem(firstItem)) {
                     result.addUnsafeEnchantment(e.getKey(), e.getValue());
                     applied++;
-                    //Bukkit.broadcastMessage("VVVVV " + e.getValue());
                     cost += e.getValue() * 1.5f;
                 }
             }
@@ -92,15 +107,23 @@ public final class Events implements Listener {
             if (rename != null && !rename.isEmpty()) {
                 cost++;
                 ItemMeta resultMeta = result.getItemMeta();
-                assert resultMeta != null;//pretty much useless
-                resultMeta.setDisplayName(rename);
-                result.setItemMeta(resultMeta);
+                if (resultMeta != null) {
+                    resultMeta.setDisplayName(rename);
+                    result.setItemMeta(resultMeta);
+                }
             }
 
             event.setResult(result);
-            inv.setRepairCost((int) cost);
-            //Bukkit.broadcastMessage("APPLIED: " + applied + " COST: " + inv.getRepairCost());
+            inv.setRepairCostAmount((int) cost);
             preparing.put(player.getUniqueId(), (int) cost);
+            // Send creative mode packet first, then the cost will be displayed properly
+            PacketEvents.getAPI().getPlayerManager().sendPacket(player, PacketListener.create(player, true));
+        } else {
+            // For all other cases (item repair, combining, renaming), just allow it through
+            // The setMaximumRepairCost should have already prevented "Too Expensive!"
+            // But we still need to track it for packet manipulation
+            preparing.put(player.getUniqueId(), repairCost);
+            // Send creative mode packet so the cost is shown instead of "Too Expensive!"
             PacketEvents.getAPI().getPlayerManager().sendPacket(player, PacketListener.create(player, true));
         }
     }
