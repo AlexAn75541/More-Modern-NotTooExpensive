@@ -1,11 +1,13 @@
 package anvil.fix;
 
 import com.github.retrooper.packetevents.PacketEvents;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.inventory.PrepareAnvilEvent;
@@ -71,6 +73,12 @@ public final class Events implements Listener {
         // to ensure the level cost is always displayed properly
         if (repairCost >= 0 && repairCost <= 39) {
             preparing.put(player.getUniqueId(), repairCost);
+            
+            // Send cost messages for all operations
+            Bukkit.getLogger().info("[NotTooExpensive] Sending messages for low cost operation to " + player.getName() + " - Cost: " + repairCost);
+            AnvilCostCalculator.sendCostChat(player, repairCost);
+            AnvilCostCalculator.sendCostActionBar(player, repairCost);
+            
             PacketEvents.getAPI().getPlayerManager().sendPacket(player, PacketListener.create(player, true));
             return;
         }
@@ -116,6 +124,12 @@ public final class Events implements Listener {
             event.setResult(result);
             inv.setRepairCostAmount((int) cost);
             preparing.put(player.getUniqueId(), (int) cost);
+            
+            // Send cost messages to player
+            Bukkit.getLogger().info("[NotTooExpensive] Sending cost messages to " + player.getName() + " - Cost: " + (int)cost);
+            AnvilCostCalculator.sendCostChat(player, (int) cost);
+            AnvilCostCalculator.sendCostActionBar(player, (int) cost);
+            
             // Send creative mode packet first, then the cost will be displayed properly
             PacketEvents.getAPI().getPlayerManager().sendPacket(player, PacketListener.create(player, true));
         } else {
@@ -123,6 +137,12 @@ public final class Events implements Listener {
             // The setMaximumRepairCost should have already prevented "Too Expensive!"
             // But we still need to track it for packet manipulation
             preparing.put(player.getUniqueId(), repairCost);
+            
+            // Send cost messages to player
+            Bukkit.getLogger().info("[NotTooExpensive] Sending vanilla cost messages to " + player.getName() + " - Cost: " + repairCost);
+            AnvilCostCalculator.sendCostChat(player, repairCost);
+            AnvilCostCalculator.sendCostActionBar(player, repairCost);
+            
             // Send creative mode packet so the cost is shown instead of "Too Expensive!"
             PacketEvents.getAPI().getPlayerManager().sendPacket(player, PacketListener.create(player, true));
         }
@@ -153,6 +173,36 @@ public final class Events implements Listener {
             //Bukkit.broadcastMessage("REMOVED");
         }
         //Bukkit.broadcastMessage("CLOSE " + event.getView().getTopInventory().getType());
+    }
+
+    @EventHandler
+    public void onAnvilClick(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player)) return;
+        if (!(event.getInventory() instanceof AnvilInventory)) return;
+        
+        // Check if clicking on result slot
+        if (event.getRawSlot() != 2) return;
+        
+        Player player = (Player) event.getWhoClicked();
+        Integer cost = preparing.get(player.getUniqueId());
+        
+        if (cost == null || cost == 0) return;
+        
+        // Check if player has enough levels
+        if (player.getLevel() < cost) {
+            event.setCancelled(true);
+            AnvilCostCalculator.sendInsufficientLevelsMessage(player, cost, player.getLevel());
+            return;
+        }
+        
+        // Deduct the levels
+        player.setLevel(player.getLevel() - cost);
+        
+        // Send success message
+        AnvilCostCalculator.sendSuccessMessage(player, cost);
+        
+        // Clear the preparing map for this player
+        preparing.remove(player.getUniqueId());
     }
 
     private void onRemove(Player player) {
